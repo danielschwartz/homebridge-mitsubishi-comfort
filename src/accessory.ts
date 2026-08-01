@@ -839,6 +839,7 @@ export class KumoThermostatAccessory {
 
     if (this.currentStatus) {
       this.currentStatus.fanSpeed = raw;
+      this.notifyStatusListeners();
     }
   }
 
