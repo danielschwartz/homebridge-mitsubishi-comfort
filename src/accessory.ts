@@ -13,6 +13,9 @@ export type CommandOrigin =
   | 'homekit:threshold'
   | 'homekit:fan-switch'
   | 'homekit:dry-switch'
+  | 'homekit:fan-speed'
+  | 'homekit:fan-swing'
+  | 'homekit:vane'
   | 'mirror';
 
 /**
@@ -47,6 +50,8 @@ export class KumoThermostatAccessory {
   private filterMaintenanceService: Service | null = null;
   private fanOnlyService: Service | null = null;
   private dryService: Service | null = null;
+  private fanv2Service: Service | null = null;
+  private vaneCoveringService: Service | null = null;
   private modelNumberSet: boolean = false;
   // Timestamp (ms) of the most recent HomeKit "off" request. Within
   // OFF_SUPPRESS_WINDOW_MS of it, setpoint writes are suppressed (cached + echoed
@@ -186,6 +191,40 @@ export class KumoThermostatAccessory {
         .onSet(this.setDryOn.bind(this));
     }
 
+    // Restore cached Fanv2 service (fan speed + swing mode).
+    const cachedFanv2 = this.accessory.getServiceById(
+      this.platform.Service.Fanv2,
+      'fan-speed',
+    );
+    if (cachedFanv2) {
+      this.fanv2Service = cachedFanv2;
+      this.fanv2Service.getCharacteristic(this.platform.Characteristic.Active)
+        .onGet(this.getFanActive.bind(this))
+        .onSet(this.setFanActive.bind(this));
+      this.fanv2Service.getCharacteristic(this.platform.Characteristic.RotationSpeed)
+        .onGet(this.getRotationSpeed.bind(this))
+        .onSet(this.setRotationSpeed.bind(this));
+      this.fanv2Service.getCharacteristic(this.platform.Characteristic.SwingMode)
+        .onGet(this.getSwingMode.bind(this))
+        .onSet(this.setSwingMode.bind(this));
+    }
+
+    // Restore cached vane direction slider (WindowCovering).
+    const cachedVane = this.accessory.getServiceById(
+      this.platform.Service.WindowCovering,
+      'vane-direction',
+    );
+    if (cachedVane) {
+      this.vaneCoveringService = cachedVane;
+      this.vaneCoveringService.getCharacteristic(this.platform.Characteristic.TargetPosition)
+        .onGet(this.getVanePosition.bind(this))
+        .onSet(this.setVanePosition.bind(this));
+      this.vaneCoveringService.getCharacteristic(this.platform.Characteristic.CurrentPosition)
+        .onGet(this.getVanePosition.bind(this));
+      this.vaneCoveringService.getCharacteristic(this.platform.Characteristic.PositionState)
+        .onGet(() => this.platform.Characteristic.PositionState.STOPPED);
+    }
+
     // Register for streaming updates
     this.kumoAPI.subscribeToDevice(this.deviceSerial, this.handleStreamingUpdate.bind(this));
     this.platform.log.debug(`Registered streaming callback for ${this.deviceSerial}`);
@@ -248,6 +287,20 @@ export class KumoThermostatAccessory {
       this.setupDrySwitch();
     } else {
       this.removeDrySwitch();
+    }
+
+    // Fan speed control — available when the unit reports > 0 fan speeds
+    if (profile.numberOfFanSpeeds > 0) {
+      this.setupFanv2Service(profile);
+    } else {
+      this.removeFanv2Service();
+    }
+
+    // Vane direction slider — available when the unit has vane direction control
+    if (profile.hasVaneDir) {
+      this.setupVaneCovering();
+    } else {
+      this.removeVaneCovering();
     }
   }
 
@@ -489,6 +542,257 @@ export class KumoThermostatAccessory {
 
     // Mirror a HomeKit-driven dry toggle to any followers immediately.
     this.notifyStatusListeners();
+  }
+
+  // ── Fanv2 service (fan speed + swing mode) ──────────────────────────
+
+  private static readonly FAN_SPEED_LABELS: readonly string[] = [
+    'auto', 'superQuiet', 'quiet', 'low', 'powerful', 'superPowerful',
+  ];
+
+  private fanSpeedToPercent(raw: string): number {
+    const idx = KumoThermostatAccessory.FAN_SPEED_LABELS.indexOf(raw);
+    if (idx < 0) {
+      return 0;
+    }
+    return Math.round((idx / (KumoThermostatAccessory.FAN_SPEED_LABELS.length - 1)) * 100);
+  }
+
+  private percentToFanSpeed(pct: number): string {
+    const labels = KumoThermostatAccessory.FAN_SPEED_LABELS;
+    const idx = Math.round((pct / 100) * (labels.length - 1));
+    return labels[Math.max(0, Math.min(idx, labels.length - 1))];
+  }
+
+  private setupFanv2Service(profile: DeviceProfile): void {
+    if (this.fanv2Service) {
+      return;
+    }
+
+    const existing = this.accessory.getServiceById(this.platform.Service.Fanv2, 'fan-speed');
+    const displayName = this.accessory.context.device.displayName;
+    const serviceName = `${displayName} Fan Speed`;
+
+    this.fanv2Service =
+      existing ||
+      this.accessory.addService(this.platform.Service.Fanv2, serviceName, 'fan-speed');
+
+    this.fanv2Service.setCharacteristic(this.platform.Characteristic.Name, serviceName);
+
+    this.fanv2Service.getCharacteristic(this.platform.Characteristic.Active)
+      .onGet(this.getFanActive.bind(this))
+      .onSet(this.setFanActive.bind(this));
+
+    this.fanv2Service.getCharacteristic(this.platform.Characteristic.RotationSpeed)
+      .setProps({ minValue: 0, maxValue: 100, minStep: 20 })
+      .onGet(this.getRotationSpeed.bind(this))
+      .onSet(this.setRotationSpeed.bind(this));
+
+    this.fanv2Service.getCharacteristic(this.platform.Characteristic.SwingMode)
+      .onGet(this.getSwingMode.bind(this))
+      .onSet(this.setSwingMode.bind(this));
+
+    if (this.currentStatus) {
+      this.fanv2Service.updateCharacteristic(
+        this.platform.Characteristic.Active,
+        this.currentStatus.power === 1
+          ? this.platform.Characteristic.Active.ACTIVE
+          : this.platform.Characteristic.Active.INACTIVE,
+      );
+      this.fanv2Service.updateCharacteristic(
+        this.platform.Characteristic.RotationSpeed,
+        this.fanSpeedToPercent(this.currentStatus.fanSpeed),
+      );
+      this.fanv2Service.updateCharacteristic(
+        this.platform.Characteristic.SwingMode,
+        this.currentStatus.airDirection === 'swing'
+          ? this.platform.Characteristic.SwingMode.SWING_ENABLED
+          : this.platform.Characteristic.SwingMode.SWING_DISABLED,
+      );
+    }
+
+    if (!existing) {
+      this.publishStructureChange();
+    }
+
+    this.platform.log.debug(`Added Fanv2 service for ${this.accessory.displayName}`);
+  }
+
+  private removeFanv2Service(): void {
+    const existing = this.accessory.getServiceById(this.platform.Service.Fanv2, 'fan-speed');
+    if (existing) {
+      this.accessory.removeService(existing);
+      this.publishStructureChange();
+    }
+    this.fanv2Service = null;
+  }
+
+  async getFanActive(): Promise<CharacteristicValue> {
+    return this.currentStatus?.power === 1
+      ? this.platform.Characteristic.Active.ACTIVE
+      : this.platform.Characteristic.Active.INACTIVE;
+  }
+
+  async setFanActive(value: CharacteristicValue): Promise<void> {
+    const active = value as number;
+    const power: 0 | 1 = active === this.platform.Characteristic.Active.ACTIVE ? 1 : 0;
+    if (power === 0) {
+      this.noteModeIntent('off');
+      await this.sendDeviceCommand({ operationMode: 'off', power: 0 }, 'homekit:fan-speed');
+    }
+  }
+
+  async getRotationSpeed(): Promise<CharacteristicValue> {
+    return this.fanSpeedToPercent(this.currentStatus?.fanSpeed ?? 'auto');
+  }
+
+  async setRotationSpeed(value: CharacteristicValue): Promise<void> {
+    const pct = value as number;
+    const raw = this.percentToFanSpeed(pct);
+
+    this.platform.log.info(
+      `[FAN SPEED] ${this.accessory.displayName}: ${pct}% → ${raw}`,
+    );
+
+    await this.sendDeviceCommand({ fanSpeedRaw: raw }, 'homekit:fan-speed');
+
+    if (this.currentStatus) {
+      this.currentStatus.fanSpeed = raw;
+    }
+  }
+
+  async getSwingMode(): Promise<CharacteristicValue> {
+    return this.currentStatus?.airDirection === 'swing'
+      ? this.platform.Characteristic.SwingMode.SWING_ENABLED
+      : this.platform.Characteristic.SwingMode.SWING_DISABLED;
+  }
+
+  async setSwingMode(value: CharacteristicValue): Promise<void> {
+    const swing = value as number;
+    const dir = swing === this.platform.Characteristic.SwingMode.SWING_ENABLED
+      ? 'swing' : 'auto';
+
+    this.platform.log.info(
+      `[SWING] ${this.accessory.displayName}: ${dir}`,
+    );
+
+    await this.sendDeviceCommand({ airDirection: dir }, 'homekit:fan-swing');
+
+    if (this.currentStatus) {
+      this.currentStatus.airDirection = dir;
+      this.vaneCoveringService?.updateCharacteristic(
+        this.platform.Characteristic.TargetPosition,
+        this.vaneDirToPercent(dir),
+      );
+      this.vaneCoveringService?.updateCharacteristic(
+        this.platform.Characteristic.CurrentPosition,
+        this.vaneDirToPercent(dir),
+      );
+    }
+  }
+
+  // ── Vane direction slider (WindowCovering) ────────────────────────
+
+  private static readonly VANE_POSITIONS: readonly string[] = [
+    'auto', 'horizontal', 'midHorizontal', 'midpoint', 'midVertical', 'vertical', 'swing',
+  ];
+
+  private vaneDirToPercent(dir: string): number {
+    const idx = KumoThermostatAccessory.VANE_POSITIONS.indexOf(dir);
+    if (idx < 0) {
+      return 0;
+    }
+    return Math.round((idx / (KumoThermostatAccessory.VANE_POSITIONS.length - 1)) * 100);
+  }
+
+  private percentToVaneDir(pct: number): string {
+    const positions = KumoThermostatAccessory.VANE_POSITIONS;
+    const idx = Math.round((pct / 100) * (positions.length - 1));
+    return positions[Math.max(0, Math.min(idx, positions.length - 1))];
+  }
+
+  private setupVaneCovering(): void {
+    if (this.vaneCoveringService) {
+      return;
+    }
+
+    const existing = this.accessory.getServiceById(
+      this.platform.Service.WindowCovering,
+      'vane-direction',
+    );
+    const displayName = this.accessory.context.device.displayName;
+    const serviceName = `${displayName} Vane`;
+
+    this.vaneCoveringService =
+      existing ||
+      this.accessory.addService(this.platform.Service.WindowCovering, serviceName, 'vane-direction');
+
+    this.vaneCoveringService.setCharacteristic(this.platform.Characteristic.Name, serviceName);
+
+    this.vaneCoveringService.getCharacteristic(this.platform.Characteristic.TargetPosition)
+      .onGet(this.getVanePosition.bind(this))
+      .onSet(this.setVanePosition.bind(this));
+
+    this.vaneCoveringService.getCharacteristic(this.platform.Characteristic.CurrentPosition)
+      .onGet(this.getVanePosition.bind(this));
+
+    this.vaneCoveringService.getCharacteristic(this.platform.Characteristic.PositionState)
+      .onGet(() => this.platform.Characteristic.PositionState.STOPPED);
+
+    if (this.currentStatus) {
+      const pos = this.vaneDirToPercent(this.currentStatus.airDirection);
+      this.vaneCoveringService.updateCharacteristic(
+        this.platform.Characteristic.TargetPosition,
+        pos,
+      );
+      this.vaneCoveringService.updateCharacteristic(
+        this.platform.Characteristic.CurrentPosition,
+        pos,
+      );
+    }
+
+    if (!existing) {
+      this.publishStructureChange();
+    }
+
+    this.platform.log.debug(`Added Vane direction slider for ${this.accessory.displayName}`);
+  }
+
+  private removeVaneCovering(): void {
+    const existing = this.accessory.getServiceById(
+      this.platform.Service.WindowCovering,
+      'vane-direction',
+    );
+    if (existing) {
+      this.accessory.removeService(existing);
+      this.publishStructureChange();
+    }
+    this.vaneCoveringService = null;
+  }
+
+  async getVanePosition(): Promise<CharacteristicValue> {
+    return this.vaneDirToPercent(this.currentStatus?.airDirection ?? 'auto');
+  }
+
+  async setVanePosition(value: CharacteristicValue): Promise<void> {
+    const pct = value as number;
+    const dir = this.percentToVaneDir(pct);
+
+    this.platform.log.info(
+      `[VANE] ${this.accessory.displayName}: ${pct}% → ${dir}`,
+    );
+
+    await this.sendDeviceCommand({ airDirection: dir }, 'homekit:vane');
+
+    if (this.currentStatus) {
+      this.currentStatus.airDirection = dir;
+      this.fanv2Service?.updateCharacteristic(
+        this.platform.Characteristic.SwingMode,
+        dir === 'swing'
+          ? this.platform.Characteristic.SwingMode.SWING_ENABLED
+          : this.platform.Characteristic.SwingMode.SWING_DISABLED,
+      );
+    }
   }
 
   private updateFilterMaintenance(filterDirty: boolean): void {
@@ -894,6 +1198,39 @@ export class KumoThermostatAccessory {
         this.dryService.updateCharacteristic(
           this.platform.Characteristic.On,
           this.isDryActive(status),
+        );
+      }
+
+      // Keep Fanv2 in sync with the unit's fan speed, active state, and swing
+      if (this.fanv2Service) {
+        this.fanv2Service.updateCharacteristic(
+          this.platform.Characteristic.Active,
+          status.power === 1
+            ? this.platform.Characteristic.Active.ACTIVE
+            : this.platform.Characteristic.Active.INACTIVE,
+        );
+        this.fanv2Service.updateCharacteristic(
+          this.platform.Characteristic.RotationSpeed,
+          this.fanSpeedToPercent(status.fanSpeed),
+        );
+        this.fanv2Service.updateCharacteristic(
+          this.platform.Characteristic.SwingMode,
+          status.airDirection === 'swing'
+            ? this.platform.Characteristic.SwingMode.SWING_ENABLED
+            : this.platform.Characteristic.SwingMode.SWING_DISABLED,
+        );
+      }
+
+      // Keep the vane direction slider in sync
+      if (this.vaneCoveringService) {
+        const pos = this.vaneDirToPercent(status.airDirection);
+        this.vaneCoveringService.updateCharacteristic(
+          this.platform.Characteristic.TargetPosition,
+          pos,
+        );
+        this.vaneCoveringService.updateCharacteristic(
+          this.platform.Characteristic.CurrentPosition,
+          pos,
         );
       }
 
@@ -1550,6 +1887,18 @@ export class KumoThermostatAccessory {
         this.fanOnlyService.updateCharacteristic(
           this.platform.Characteristic.On,
           this.isFanOnlyActive(this.currentStatus),
+        );
+      }
+      if (this.fanv2Service && fan) {
+        this.fanv2Service.updateCharacteristic(
+          this.platform.Characteristic.RotationSpeed,
+          this.fanSpeedToPercent(fan),
+        );
+        this.fanv2Service.updateCharacteristic(
+          this.platform.Characteristic.Active,
+          this.currentStatus.power === 1
+            ? this.platform.Characteristic.Active.ACTIVE
+            : this.platform.Characteristic.Active.INACTIVE,
         );
       }
     }

@@ -102,6 +102,9 @@ export function buildLocalCommandBody(commands: Commands): Buffer {
   } else if (commands.fanSpeed !== undefined) {
     status.fanSpeed = mapFanSpeedToLocal(commands.fanSpeed);
   }
+  if (commands.airDirection !== undefined) {
+    status.vaneDir = commands.airDirection;
+  }
   // Note: commands.power is intentionally ignored — `mode` carries on/off locally.
 
   return Buffer.from(JSON.stringify({ c: { indoorUnit: { status } } }), 'utf8');
