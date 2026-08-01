@@ -59,6 +59,8 @@ function makeService(type, name, subtype) {
       if (!chars.has(id)) chars.set(id, makeCharacteristic());
       return chars.get(id);
     },
+    testCharacteristic(id) { return chars.has(id); },
+    removeCharacteristic() {},
     setCharacteristic(id, v) { svc.getCharacteristic(id).value = v; return svc; },
     updateCharacteristic(id, v) { svc.getCharacteristic(id).value = v; return svc; },
   };

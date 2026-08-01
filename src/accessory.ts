@@ -713,14 +713,19 @@ export class KumoThermostatAccessory {
 
     // SwingMode is optional on Fanv2: add it only when the unit can swing, and
     // drop a stale one left by a cached service or an earlier profile when it can't.
+    const hadSwing = this.fanv2Service.testCharacteristic(this.platform.Characteristic.SwingMode);
     if (profile.hasVaneSwing) {
       this.fanv2Service.getCharacteristic(this.platform.Characteristic.SwingMode)
         .onGet(this.getSwingMode.bind(this))
         .onSet(this.setSwingMode.bind(this));
-    } else if (this.fanv2Service.testCharacteristic(this.platform.Characteristic.SwingMode)) {
+      if (!hadSwing) {
+        this.publishStructureChange();
+      }
+    } else if (hadSwing) {
       this.fanv2Service.removeCharacteristic(
         this.fanv2Service.getCharacteristic(this.platform.Characteristic.SwingMode),
       );
+      this.publishStructureChange();
     }
   }
 
@@ -762,7 +767,18 @@ export class KumoThermostatAccessory {
 
     this.noteModeIntent('off');
     const success = await this.sendDeviceCommand({ operationMode: 'off', power: 0 }, 'homekit:fan-speed');
-    if (success && this.currentStatus) {
+    if (!success) {
+      setTimeout(() => {
+        this.fanv2Service?.updateCharacteristic(
+          this.platform.Characteristic.Active,
+          this.currentStatus?.power === 1
+            ? this.platform.Characteristic.Active.ACTIVE
+            : this.platform.Characteristic.Active.INACTIVE,
+        );
+      }, 100);
+      return;
+    }
+    if (this.currentStatus) {
       this.currentStatus.operationMode = 'off';
       this.currentStatus.power = 0;
       this.service.updateCharacteristic(
@@ -981,6 +997,15 @@ export class KumoThermostatAccessory {
     this.platform.log.info(
       `[VANE] ${this.accessory.displayName}: ${pct}% → ${dir}`,
     );
+
+    // When sliding TO swing, save the current non-swing position so SwingMode OFF
+    // can restore it. Same save logic as setSwingMode's ON branch — without this,
+    // engaging swing via the slider leaves preSwingVaneDir stale, and toggling
+    // SwingMode OFF restores the wrong position.
+    if (dir === 'swing') {
+      const current = this.currentStatus?.airDirection ?? 'auto';
+      this.preSwingVaneDir = current === 'swing' ? this.preSwingVaneDir : current;
+    }
 
     const success = await this.sendDeviceCommand({ airDirection: dir }, 'homekit:vane');
 
@@ -2111,17 +2136,19 @@ export class KumoThermostatAccessory {
           this.isFanOnlyActive(this.currentStatus),
         );
       }
-      if (this.fanv2Service && fan) {
-        this.fanv2Service.updateCharacteristic(
-          this.platform.Characteristic.RotationSpeed,
-          this.fanSpeedToPercent(fan),
-        );
+      if (this.fanv2Service) {
         this.fanv2Service.updateCharacteristic(
           this.platform.Characteristic.Active,
           this.currentStatus.power === 1
             ? this.platform.Characteristic.Active.ACTIVE
             : this.platform.Characteristic.Active.INACTIVE,
         );
+        if (fan) {
+          this.fanv2Service.updateCharacteristic(
+            this.platform.Characteristic.RotationSpeed,
+            this.fanSpeedToPercent(fan),
+          );
+        }
       }
     }
   }
