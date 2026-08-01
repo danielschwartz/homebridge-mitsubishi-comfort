@@ -595,33 +595,46 @@ export class KumoThermostatAccessory {
     return positions;
   }
 
-  /**
-   * The percentage step between adjacent entries in an n-item list. Used as the
-   * characteristic's minStep so HomeKit's slider snaps to exactly the positions
-   * the unit supports.
-   */
-  private static stepFor(count: number): number {
-    return count > 1 ? 100 / (count - 1) : 100;
+  // ── Fan speed ↔ RotationSpeed percentage ──────────────────────────
+  // RotationSpeed 0 means "fan off" in HomeKit — the Home app pairs the bottom of
+  // the slider with Active=INACTIVE. Mapping the first speed to 0% therefore made
+  // the lowest fan setting indistinguishable from off: selecting it sent
+  // Active=INACTIVE, which setFanActive turns into operationMode:'off' — dragging
+  // the fan slider down powered off the whole heat pump. It also meant a unit
+  // running on its lowest speed ('auto' when the unit has it) reported
+  // Active=ACTIVE alongside RotationSpeed=0, a contradiction the Home app renders
+  // as off. Reserve 0 for off and spread the N speeds over (0, 100].
+  // RotationSpeed is a HAP *float*, so a fractional step is legal here.
+
+  private static fanStepFor(count: number): number {
+    return count > 0 ? 100 / count : 100;
+  }
+
+  private static fanIndexToPercent(idx: number, count: number): number {
+    return count > 0 ? ((idx + 1) / count) * 100 : 0;
   }
 
   /**
-   * Index → percentage, left UNROUNDED so the value lands exactly on the minStep
-   * grid. Rounding here (e.g. 67 for a 33.333 step) would disagree with the value
-   * HAP stores after coercion, which surfaces as a slider that jumps after being set.
+   * Percentage → speed index. Divides by the step rather than scaling by
+   * (count-1) so a value that came back off the fractional minStep grid
+   * (16.666666666666668 for six speeds) still lands on its own band instead of
+   * tipping into the next one.
    */
-  private static indexToPercent(idx: number, count: number): number {
-    return count > 1 ? (idx / (count - 1)) * 100 : 0;
-  }
-
-  private static percentToIndex(pct: number, count: number): number {
-    const idx = Math.round((pct / 100) * (count - 1));
+  private static fanPercentToIndex(pct: number, count: number): number {
+    if (count <= 0) {
+      return 0;
+    }
+    const idx = Math.round(pct / KumoThermostatAccessory.fanStepFor(count)) - 1;
     return Math.max(0, Math.min(idx, count - 1));
   }
 
   private fanSpeedToPercent(raw: string): number {
-    const idx = this.fanSpeedLabels.indexOf(raw);
-    return KumoThermostatAccessory.indexToPercent(
-      idx < 0 ? 0 : idx, this.fanSpeedLabels.length);
+    const labels = this.fanSpeedLabels;
+    if (labels.length === 0) {
+      return 0;
+    }
+    const idx = labels.indexOf(raw);
+    return KumoThermostatAccessory.fanIndexToPercent(idx < 0 ? 0 : idx, labels.length);
   }
 
   private percentToFanSpeed(pct: number): string {
@@ -629,7 +642,7 @@ export class KumoThermostatAccessory {
     if (labels.length === 0) {
       return 'auto';
     }
-    return labels[KumoThermostatAccessory.percentToIndex(pct, labels.length)];
+    return labels[KumoThermostatAccessory.fanPercentToIndex(pct, labels.length)];
   }
 
   private setupFanv2Service(profile: DeviceProfile): void {
@@ -643,6 +656,7 @@ export class KumoThermostatAccessory {
         this.accessory.addService(this.platform.Service.Fanv2, serviceName, 'fan-speed');
 
       this.fanv2Service.setCharacteristic(this.platform.Characteristic.Name, serviceName);
+      this.fanv2Service.setCharacteristic(this.platform.Characteristic.ConfiguredName, serviceName);
 
       this.fanv2Service.getCharacteristic(this.platform.Characteristic.Active)
         .onGet(this.getFanActive.bind(this))
@@ -708,7 +722,7 @@ export class KumoThermostatAccessory {
       .setProps({
         minValue: 0,
         maxValue: 100,
-        minStep: KumoThermostatAccessory.stepFor(this.fanSpeedLabels.length),
+        minStep: KumoThermostatAccessory.fanStepFor(this.fanSpeedLabels.length),
       });
 
     // SwingMode is optional on Fanv2: add it only when the unit can swing, and
@@ -882,9 +896,34 @@ export class KumoThermostatAccessory {
 
   // ── Vane direction slider (WindowCovering) ────────────────────────
 
+  // Current/TargetPosition are uint8 in HAP, and hap-nodejs snaps a written value
+  // to `minStep * Math.round(value / minStep)` WITHOUT re-rounding to an integer
+  // for integer formats (Characteristic.js). A fractional step — 100/6 for the
+  // seven positions a swing-capable unit has — therefore leaves a non-integer
+  // sitting in a uint8 characteristic and goes out on the wire that way. Keep the
+  // step integral: use the exact step when it divides 100 evenly (six positions →
+  // 20), otherwise fall back to 1 and snap to the nearest position in software.
+
+  private static vaneStepFor(count: number): number {
+    if (count <= 1) {
+      return 100;
+    }
+    const step = 100 / (count - 1);
+    return Number.isInteger(step) ? step : 1;
+  }
+
+  private static vaneIndexToPercent(idx: number, count: number): number {
+    return count > 1 ? Math.round((idx / (count - 1)) * 100) : 0;
+  }
+
+  private static vanePercentToIndex(pct: number, count: number): number {
+    const idx = Math.round((pct / 100) * (count - 1));
+    return Math.max(0, Math.min(idx, count - 1));
+  }
+
   private vaneDirToPercent(dir: string): number {
     const idx = this.vanePositions.indexOf(dir);
-    return KumoThermostatAccessory.indexToPercent(
+    return KumoThermostatAccessory.vaneIndexToPercent(
       idx < 0 ? 0 : idx, this.vanePositions.length);
   }
 
@@ -893,7 +932,7 @@ export class KumoThermostatAccessory {
     if (positions.length === 0) {
       return 'auto';
     }
-    return positions[KumoThermostatAccessory.percentToIndex(pct, positions.length)];
+    return positions[KumoThermostatAccessory.vanePercentToIndex(pct, positions.length)];
   }
 
   private setupVaneCovering(profile: DeviceProfile): void {
@@ -910,6 +949,8 @@ export class KumoThermostatAccessory {
         this.accessory.addService(this.platform.Service.WindowCovering, serviceName, 'vane-direction');
 
       this.vaneCoveringService.setCharacteristic(this.platform.Characteristic.Name, serviceName);
+      this.vaneCoveringService.setCharacteristic(
+        this.platform.Characteristic.ConfiguredName, serviceName);
 
       this.vaneCoveringService.getCharacteristic(this.platform.Characteristic.TargetPosition)
         .onGet(this.getVanePosition.bind(this))
@@ -962,7 +1003,7 @@ export class KumoThermostatAccessory {
     const props = {
       minValue: 0,
       maxValue: 100,
-      minStep: KumoThermostatAccessory.stepFor(this.vanePositions.length),
+      minStep: KumoThermostatAccessory.vaneStepFor(this.vanePositions.length),
     };
 
     // Both handles need the same step: HomeKit renders the covering as "moving"
