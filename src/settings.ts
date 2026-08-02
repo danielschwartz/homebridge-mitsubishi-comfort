@@ -152,6 +152,7 @@ export interface Commands {
   // the coarse `fanSpeed` enum. Takes precedence over `fanSpeed` on the local path;
   // folded into `fanSpeed` on the cloud path (see toCloudCommands).
   fanSpeedRaw?: string;
+  airDirection?: string;
   power?: 0 | 1;
 }
 
