@@ -22,7 +22,7 @@ export type CommandOrigin =
  */
 function roundToNearestFahrenheit(celsius: number): number {
   const f = celsius * 9 / 5 + 32;
-  return (Math.floor(f) - 32) * 5 / 9;
+  return Math.round(((Math.floor(f) - 32) * 5 / 9) * 10000) / 10000;
 }
 
 /**
