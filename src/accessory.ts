@@ -16,15 +16,13 @@ export type CommandOrigin =
   | 'mirror';
 
 /**
- * Round a Celsius value to the nearest exact Fahrenheit-whole-degree equivalent.
- * Eliminates the ±1°F display error in the Home app caused by the
- * °F→°C (Kumo API) → °C→°F (Home app) double-conversion: e.g. 70°F stored as
- * 21.0°C reads back as 69.8°F and may display as 69°F. After correction,
- * 21.0°C → round(69.8)=70°F → (70−32)×5/9 = 21.111°C, which displays as 70°F.
+ * Snap a Celsius value to the Fahrenheit-whole-degree grid using Math.floor,
+ * matching the Kumo app's display behaviour (it truncates rather than rounding).
+ * e.g. 22°C → 71.6°F → floor → 71°F → 21.667°C published to HomeKit.
  */
 function roundToNearestFahrenheit(celsius: number): number {
   const f = celsius * 9 / 5 + 32;
-  return (Math.round(f) - 32) * 5 / 9;
+  return (Math.floor(f) - 32) * 5 / 9;
 }
 
 /**

@@ -4,7 +4,7 @@ exports.KumoThermostatAccessory = void 0;
 const settings_1 = require("./settings");
 function roundToNearestFahrenheit(celsius) {
     const f = celsius * 9 / 5 + 32;
-    return (Math.round(f) - 32) * 5 / 9;
+    return (Math.floor(f) - 32) * 5 / 9;
 }
 function powerModeLabel(s) {
     if (!s) {

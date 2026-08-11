@@ -153,20 +153,20 @@ function getCharValue(accessory, serviceType, charId) {
 
 // --- Tests ---
 
-test('roundToNearestFahrenheit corrects 21.0°C to display as 70°F', () => {
+test('roundToNearestFahrenheit corrects 21.0°C to display as 69°F (matching Kumo floor)', () => {
   const { handler, accessory } = buildHandler('F');
-  // 70°F = 21.111°C, API returns 21.0°C which is 69.8°F → without fix shows 69°F
+  // 21.0°C = 69.8°F → floor = 69°F (matches Kumo app's truncation behaviour)
   feedZoneUpdate(handler, 21.0, 21.0, 21.0, 'cool');
 
   const currentTemp = getCharValue(accessory, 'Thermostat', Characteristic.CurrentTemperature);
   const targetTemp = getCharValue(accessory, 'Thermostat', Characteristic.TargetTemperature);
 
-  // After correction: 21.0°C → round(69.8°F) = 70°F → (70-32)*5/9 ≈ 21.111°C
-  const expected = (70 - 32) * 5 / 9;
+  // After correction: 21.0°C → floor(69.8°F) = 69°F → (69-32)*5/9 ≈ 20.556°C
+  const expected = (69 - 32) * 5 / 9;
   assert.ok(Math.abs(currentTemp - expected) < 0.001,
-    `currentTemp should be ~${expected.toFixed(4)}°C (70°F), got ${currentTemp}`);
+    `currentTemp should be ~${expected.toFixed(4)}°C (69°F), got ${currentTemp}`);
   assert.ok(Math.abs(targetTemp - expected) < 0.001,
-    `targetTemp should be ~${expected.toFixed(4)}°C (70°F), got ${targetTemp}`);
+    `targetTemp should be ~${expected.toFixed(4)}°C (69°F), got ${targetTemp}`);
 });
 
 test('no correction when temperatureUnit is C', () => {
@@ -185,29 +185,29 @@ test('correction is default (no config = treated as F)', () => {
   feedZoneUpdate(handler, 21.0, 21.0, 21.0, 'cool');
 
   const currentTemp = getCharValue(accessory, 'Thermostat', Characteristic.CurrentTemperature);
-  const expected = (70 - 32) * 5 / 9;
+  const expected = (69 - 32) * 5 / 9;
   assert.ok(Math.abs(currentTemp - expected) < 0.001,
     `should default to F correction, got ${currentTemp}`);
 });
 
-test('correction round-trips a range of Fahrenheit values', () => {
+test('correction floors °F values to match Kumo app display', () => {
   const { handler, accessory } = buildHandler('F');
 
-  // Test a set of common Fahrenheit setpoints and their lossy Celsius representations
+  // Test floor-based correction: °C → floor(°F) to match Kumo app's truncation
   const cases = [
-    { inputC: 15.5, expectedF: 60 },  // 60°F = 15.556°C
-    { inputC: 18.0, expectedF: 64 },  // 64°F = 17.778°C, but 18.0°C → 64.4°F → 64°F
-    { inputC: 18.5, expectedF: 65 },  // 65°F = 18.333°C
-    { inputC: 20.0, expectedF: 68 },  // 68°F = 20.000°C (exact)
-    { inputC: 20.5, expectedF: 69 },  // 69°F = 20.556°C
-    { inputC: 21.0, expectedF: 70 },  // 70°F = 21.111°C
-    { inputC: 21.5, expectedF: 71 },  // 71°F = 21.667°C
-    { inputC: 22.0, expectedF: 72 },  // 72°F = 22.222°C
-    { inputC: 22.5, expectedF: 73 },  // 73°F = 22.778°C
-    { inputC: 23.0, expectedF: 73 },  // 73°F = 22.778°C, 23.0°C → 73.4°F → 73°F
-    { inputC: 23.5, expectedF: 74 },  // 74°F = 23.333°C
-    { inputC: 24.0, expectedF: 75 },  // 75°F = 23.889°C, 24.0°C → 75.2°F → 75°F
-    { inputC: 25.0, expectedF: 77 },  // 77°F = 25.000°C (exact)
+    { inputC: 15.5, expectedF: 59 },  // 15.5°C = 59.9°F → floor = 59
+    { inputC: 18.0, expectedF: 64 },  // 18.0°C = 64.4°F → floor = 64
+    { inputC: 18.5, expectedF: 65 },  // 18.5°C = 65.3°F → floor = 65
+    { inputC: 20.0, expectedF: 68 },  // 20.0°C = 68.0°F → floor = 68 (exact)
+    { inputC: 20.5, expectedF: 68 },  // 20.5°C = 68.9°F → floor = 68
+    { inputC: 21.0, expectedF: 69 },  // 21.0°C = 69.8°F → floor = 69
+    { inputC: 21.5, expectedF: 70 },  // 21.5°C = 70.7°F → floor = 70
+    { inputC: 22.0, expectedF: 71 },  // 22.0°C = 71.6°F → floor = 71
+    { inputC: 22.5, expectedF: 72 },  // 22.5°C = 72.5°F → floor = 72
+    { inputC: 23.0, expectedF: 73 },  // 23.0°C = 73.4°F → floor = 73
+    { inputC: 23.5, expectedF: 74 },  // 23.5°C = 74.3°F → floor = 74
+    { inputC: 24.0, expectedF: 75 },  // 24.0°C = 75.2°F → floor = 75
+    { inputC: 25.0, expectedF: 77 },  // 25.0°C = 77.0°F → floor = 77 (exact)
   ];
 
   for (const { inputC, expectedF } of cases) {
@@ -252,6 +252,6 @@ test('internal currentStatus is NOT modified by the correction', () => {
   // cache and corrects at the boundary)
   handler.getCurrentTemperature().then(val => {
     const resultF = Math.round(val * 9 / 5 + 32);
-    assert.strictEqual(resultF, 70, 'getCurrentTemperature getter should also return corrected value');
+    assert.strictEqual(resultF, 69, 'getCurrentTemperature getter should also return corrected value');
   });
 });
