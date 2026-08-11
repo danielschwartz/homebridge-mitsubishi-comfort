@@ -496,12 +496,14 @@ class KumoThermostatAccessory {
             this.service.updateCharacteristic(this.platform.Characteristic.CurrentHeatingCoolingState, this.mapToCurrentHeatingCoolingState(status));
             this.service.updateCharacteristic(this.platform.Characteristic.TargetHeatingCoolingState, this.mapToTargetHeatingCoolingState(status));
             if (status.roomTemp !== undefined && status.roomTemp !== null && !isNaN(status.roomTemp)) {
-                this.service.updateCharacteristic(this.platform.Characteristic.CurrentTemperature, this.correctTemp(status.roomTemp));
+                const correctedRoom = this.correctTemp(status.roomTemp);
+                this.platform.log.info(`[TEMP-DIAG] ${this.accessory.displayName} room: raw=${status.roomTemp}°C (${(status.roomTemp * 9 / 5 + 32).toFixed(2)}°F) → corrected=${correctedRoom.toFixed(4)}°C (${(correctedRoom * 9 / 5 + 32).toFixed(2)}°F)`);
+                this.service.updateCharacteristic(this.platform.Characteristic.CurrentTemperature, correctedRoom);
             }
             const targetTemp = this.getTargetTempFromStatus(status);
             if (targetTemp !== undefined && targetTemp !== null && !isNaN(targetTemp)) {
-                const targetTempF = (targetTemp * 9 / 5) + 32;
-                this.platform.log.debug(`[TEMP UPDATE] ${this.accessory.displayName}: API returned target ${targetTemp.toFixed(3)}°C (${targetTempF.toFixed(1)}°F) [mode: ${status.operationMode}]`);
+                const correctedTarget = this.correctTemp(targetTemp);
+                this.platform.log.info(`[TEMP-DIAG] ${this.accessory.displayName} target: raw=${targetTemp}°C (${(targetTemp * 9 / 5 + 32).toFixed(2)}°F) → corrected=${correctedTarget.toFixed(4)}°C (${(correctedTarget * 9 / 5 + 32).toFixed(2)}°F) [spHeat=${status.spHeat} spCool=${status.spCool}]`);
                 this.service.updateCharacteristic(this.platform.Characteristic.TargetTemperature, this.correctTemp(targetTemp));
             }
             if (status.spHeat !== undefined && status.spHeat !== null && !isNaN(status.spHeat)) {
