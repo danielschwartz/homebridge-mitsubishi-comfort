@@ -497,13 +497,6 @@ class KumoThermostatAccessory {
             this.currentStatus = status;
             this.hasReceivedValidUpdate = true;
             this.platform.log.debug(`${this.accessory.displayName}: ${status.roomTemp}°C (target: ${this.getTargetTempFromStatus(status)}°C, mode: ${status.operationMode})`);
-            {
-                const toF = (c) => c * 9 / 5 + 32;
-                const fmtRoom = (c) => { const f = toF(c); return `${c}°C=${f.toFixed(1)}°F→FLOOR=${Math.floor(f)}`; };
-                const fmtSp = (c) => { const f = toF(c); return `${c}°C=${f.toFixed(1)}°F→ROUND=${Math.round(f)}`; };
-                const rawTarget = this.getTargetTempFromStatus(status);
-                this.platform.log.info(`[TEMP-DIAG] ${this.accessory.displayName}: room: ${fmtRoom(status.roomTemp)} | spH: ${fmtSp(status.spHeat)} | spC: ${fmtSp(status.spCool)} | target(${status.operationMode}): ${rawTarget !== undefined ? fmtSp(rawTarget) : 'n/a'}`);
-            }
             this.service.updateCharacteristic(this.platform.Characteristic.CurrentHeatingCoolingState, this.mapToCurrentHeatingCoolingState(status));
             this.service.updateCharacteristic(this.platform.Characteristic.TargetHeatingCoolingState, this.mapToTargetHeatingCoolingState(status));
             if (status.roomTemp !== undefined && status.roomTemp !== null && !isNaN(status.roomTemp)) {
