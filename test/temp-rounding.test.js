@@ -155,7 +155,7 @@ function getCharValue(accessory, serviceType, charId) {
 
 test('21.0°C snaps to 70°F for both room temp and setpoint', () => {
   const { handler, accessory } = buildHandler('F');
-  // 21.0°C = 69.8°F → round = 70°F
+  // 21.0°C = 69.8°F → round = 70, ceil = 70 (both agree here)
   feedZoneUpdate(handler, 21.0, 21.0, 21.0, 'cool');
 
   const currentTemp = getCharValue(accessory, 'Thermostat', Characteristic.CurrentTemperature);
@@ -189,23 +189,19 @@ test('correction is default (no config = treated as F)', () => {
     `should default to F correction (21°C → 70°F), got ${currentTemp}`);
 });
 
-test('Math.round correction across a range of values', () => {
+test('room temps use Math.round across a range of values', () => {
   const { handler, accessory } = buildHandler('F');
 
   const cases = [
     { inputC: 14.5, expectedF: 58 },  // 58.1°F → round = 58
     { inputC: 15.5, expectedF: 60 },  // 59.9°F → round = 60
-    { inputC: 16.5, expectedF: 62 },  // 61.7°F → round = 62
     { inputC: 17.5, expectedF: 64 },  // 63.5°F → round = 64
     { inputC: 18.0, expectedF: 64 },  // 64.4°F → round = 64
     { inputC: 18.5, expectedF: 65 },  // 65.3°F → round = 65
+    { inputC: 19.0, expectedF: 66 },  // 66.2°F → round = 66
     { inputC: 20.0, expectedF: 68 },  // 68.0°F → round = 68 (exact)
-    { inputC: 20.5, expectedF: 69 },  // 68.9°F → round = 69
     { inputC: 21.0, expectedF: 70 },  // 69.8°F → round = 70
-    { inputC: 22.0, expectedF: 72 },  // 71.6°F → round = 72
-    { inputC: 22.5, expectedF: 73 },  // 72.5°F → round = 73
     { inputC: 23.0, expectedF: 73 },  // 73.4°F → round = 73
-    { inputC: 23.5, expectedF: 74 },  // 74.3°F → round = 74
     { inputC: 25.0, expectedF: 77 },  // 77.0°F → round = 77 (exact)
   ];
 
@@ -216,15 +212,40 @@ test('Math.round correction across a range of values', () => {
     const currentF = Math.round(currentTemp * 9 / 5 + 32);
     assert.strictEqual(currentF, expectedF,
       `room temp ${inputC}°C should round to ${expectedF}°F, got ${currentF}°F`);
+  }
+});
+
+test('setpoints use Math.ceil to recover original °F from floor-to-0.5°C quantization', () => {
+  const { handler, accessory } = buildHandler('F');
+
+  const cases = [
+    { inputC: 14.5, expectedF: 59 },  // 58.1°F → ceil = 59 (Celsius-native edge case)
+    { inputC: 15.5, expectedF: 60 },  // 59.9°F → ceil = 60
+    { inputC: 17.5, expectedF: 64 },  // 63.5°F → ceil = 64
+    { inputC: 18.0, expectedF: 65 },  // 64.4°F → ceil = 65 (65°F floor-quantized)
+    { inputC: 18.5, expectedF: 66 },  // 65.3°F → ceil = 66 (66°F floor-quantized)
+    { inputC: 19.0, expectedF: 67 },  // 66.2°F → ceil = 67 (67°F floor-quantized)
+    { inputC: 20.0, expectedF: 68 },  // 68.0°F → ceil = 68 (exact)
+    { inputC: 20.5, expectedF: 69 },  // 68.9°F → ceil = 69
+    { inputC: 21.0, expectedF: 70 },  // 69.8°F → ceil = 70
+    { inputC: 22.0, expectedF: 72 },  // 71.6°F → ceil = 72
+    { inputC: 22.5, expectedF: 73 },  // 72.5°F → ceil = 73
+    { inputC: 23.0, expectedF: 74 },  // 73.4°F → ceil = 74 (74°F floor-quantized)
+    { inputC: 23.5, expectedF: 75 },  // 74.3°F → ceil = 75 (75°F floor-quantized)
+    { inputC: 25.0, expectedF: 77 },  // 77.0°F → ceil = 77 (exact)
+  ];
+
+  for (const { inputC, expectedF } of cases) {
+    feedZoneUpdate(handler, inputC, inputC, inputC, 'cool');
 
     const targetTemp = getCharValue(accessory, 'Thermostat', Characteristic.TargetTemperature);
     const targetF = Math.round(targetTemp * 9 / 5 + 32);
     assert.strictEqual(targetF, expectedF,
-      `setpoint ${inputC}°C should round to ${expectedF}°F, got ${targetF}°F`);
+      `setpoint ${inputC}°C should ceil to ${expectedF}°F, got ${targetF}°F`);
   }
 });
 
-test('threshold temperatures use the same rounding correction', () => {
+test('threshold temperatures use ceil correction (setpoints)', () => {
   const { handler, accessory } = buildHandler('F');
   // In auto mode, both spHeat and spCool are published as threshold temps
   feedZoneUpdate(handler, 21.0, 20.0, 23.0, 'autoHeat');
@@ -232,17 +253,17 @@ test('threshold temperatures use the same rounding correction', () => {
   const heatThreshold = getCharValue(accessory, 'Thermostat', Characteristic.HeatingThresholdTemperature);
   const coolThreshold = getCharValue(accessory, 'Thermostat', Characteristic.CoolingThresholdTemperature);
 
-  // 20.0°C → 68°F (exact, round and floor agree)
+  // 20.0°C → 68°F (exact, round and ceil agree)
   const expectedHeatF = 68;
   const actualHeatF = Math.round(heatThreshold * 9 / 5 + 32);
   assert.strictEqual(actualHeatF, expectedHeatF,
-    `heat threshold 20.0°C should round to ${expectedHeatF}°F, got ${actualHeatF}°F`);
+    `heat threshold 20.0°C should be ${expectedHeatF}°F, got ${actualHeatF}°F`);
 
-  // 23.0°C → 73.4°F → round = 73°F
-  const expectedCoolF = 73;
+  // 23.0°C → 73.4°F → ceil = 74°F (74°F floor-quantized to 23.0°C)
+  const expectedCoolF = 74;
   const actualCoolF = Math.round(coolThreshold * 9 / 5 + 32);
   assert.strictEqual(actualCoolF, expectedCoolF,
-    `cool threshold 23.0°C should round to ${expectedCoolF}°F, got ${actualCoolF}°F`);
+    `cool threshold 23.0°C should ceil to ${expectedCoolF}°F, got ${actualCoolF}°F`);
 });
 
 test('internal currentStatus is NOT modified by the correction', () => {
