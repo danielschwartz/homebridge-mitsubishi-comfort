@@ -2,9 +2,10 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.KumoThermostatAccessory = void 0;
 const settings_1 = require("./settings");
-function roundToNearestFahrenheit(celsius) {
+function snapToFahrenheit(celsius, useFloor) {
     const f = celsius * 9 / 5 + 32;
-    return Math.round(((Math.floor(f) - 32) * 5 / 9) * 10000) / 10000;
+    const snapped = useFloor ? Math.floor(f) : Math.round(f);
+    return Math.round(((snapped - 32) * 5 / 9) * 10000) / 10000;
 }
 function powerModeLabel(s) {
     if (!s) {
@@ -93,7 +94,10 @@ class KumoThermostatAccessory {
         });
     }
     correctTemp(celsius) {
-        return this.useFahrenheitCorrection ? roundToNearestFahrenheit(celsius) : celsius;
+        return this.useFahrenheitCorrection ? snapToFahrenheit(celsius, true) : celsius;
+    }
+    correctSetpoint(celsius) {
+        return this.useFahrenheitCorrection ? snapToFahrenheit(celsius, false) : celsius;
     }
     applyDeviceProfile(profile) {
         this.deviceProfile = profile;
@@ -493,13 +497,13 @@ class KumoThermostatAccessory {
             }
             const targetTemp = this.getTargetTempFromStatus(status);
             if (targetTemp !== undefined && targetTemp !== null && !isNaN(targetTemp)) {
-                this.service.updateCharacteristic(this.platform.Characteristic.TargetTemperature, this.correctTemp(targetTemp));
+                this.service.updateCharacteristic(this.platform.Characteristic.TargetTemperature, this.correctSetpoint(targetTemp));
             }
             if (status.spHeat !== undefined && status.spHeat !== null && !isNaN(status.spHeat)) {
-                this.service.updateCharacteristic(this.platform.Characteristic.HeatingThresholdTemperature, this.correctTemp(status.spHeat));
+                this.service.updateCharacteristic(this.platform.Characteristic.HeatingThresholdTemperature, this.correctSetpoint(status.spHeat));
             }
             if (status.spCool !== undefined && status.spCool !== null && !isNaN(status.spCool)) {
-                this.service.updateCharacteristic(this.platform.Characteristic.CoolingThresholdTemperature, this.correctTemp(status.spCool));
+                this.service.updateCharacteristic(this.platform.Characteristic.CoolingThresholdTemperature, this.correctSetpoint(status.spCool));
             }
             if (this.hasHumiditySensor && status.humidity !== null) {
                 this.service.updateCharacteristic(this.platform.Characteristic.CurrentRelativeHumidity, status.humidity);
@@ -701,7 +705,7 @@ class KumoThermostatAccessory {
             return 20;
         }
         this.platform.log.debug(`HomeKit get target temp for ${this.accessory.displayName}: ${temp}°C`);
-        return this.correctTemp(temp);
+        return this.correctSetpoint(temp);
     }
     async setTargetTemperature(value) {
         const temp = value;
@@ -784,7 +788,7 @@ class KumoThermostatAccessory {
         if (v === undefined || v === null || isNaN(v)) {
             return fallback;
         }
-        return this.correctTemp(v);
+        return this.correctSetpoint(v);
     }
     async setHeatingThresholdTemperature(value) {
         await this.setThresholdTemperature('spHeat', value);

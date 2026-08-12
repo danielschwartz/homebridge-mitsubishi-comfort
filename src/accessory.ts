@@ -16,13 +16,15 @@ export type CommandOrigin =
   | 'mirror';
 
 /**
- * Snap a Celsius value to the Fahrenheit-whole-degree grid using Math.floor,
- * matching the Kumo app's display behaviour (it truncates rather than rounding).
- * e.g. 22°C → 71.6°F → floor → 71°F → 21.667°C published to HomeKit.
+ * Snap a Celsius value to the Fahrenheit-whole-degree grid.
+ *
+ * useFloor=true  → Math.floor (room temps: matches Kumo app's truncation of sensor readings)
+ * useFloor=false → Math.round (setpoints: recovers original °F from API's 0.5°C quantisation)
  */
-function roundToNearestFahrenheit(celsius: number): number {
+function snapToFahrenheit(celsius: number, useFloor: boolean): number {
   const f = celsius * 9 / 5 + 32;
-  return Math.round(((Math.floor(f) - 32) * 5 / 9) * 10000) / 10000;
+  const snapped = useFloor ? Math.floor(f) : Math.round(f);
+  return Math.round(((snapped - 32) * 5 / 9) * 10000) / 10000;
 }
 
 /**
@@ -213,7 +215,11 @@ export class KumoThermostatAccessory {
 
   /** Apply Fahrenheit round-trip correction if configured (no-op when disabled). */
   private correctTemp(celsius: number): number {
-    return this.useFahrenheitCorrection ? roundToNearestFahrenheit(celsius) : celsius;
+    return this.useFahrenheitCorrection ? snapToFahrenheit(celsius, true) : celsius;
+  }
+
+  private correctSetpoint(celsius: number): number {
+    return this.useFahrenheitCorrection ? snapToFahrenheit(celsius, false) : celsius;
   }
 
   private applyDeviceProfile(profile: DeviceProfile): void {
@@ -864,7 +870,7 @@ export class KumoThermostatAccessory {
       if (targetTemp !== undefined && targetTemp !== null && !isNaN(targetTemp)) {
         this.service.updateCharacteristic(
           this.platform.Characteristic.TargetTemperature,
-          this.correctTemp(targetTemp),
+          this.correctSetpoint(targetTemp),
         );
       }
 
@@ -876,13 +882,13 @@ export class KumoThermostatAccessory {
       if (status.spHeat !== undefined && status.spHeat !== null && !isNaN(status.spHeat)) {
         this.service.updateCharacteristic(
           this.platform.Characteristic.HeatingThresholdTemperature,
-          this.correctTemp(status.spHeat),
+          this.correctSetpoint(status.spHeat),
         );
       }
       if (status.spCool !== undefined && status.spCool !== null && !isNaN(status.spCool)) {
         this.service.updateCharacteristic(
           this.platform.Characteristic.CoolingThresholdTemperature,
-          this.correctTemp(status.spCool),
+          this.correctSetpoint(status.spCool),
         );
       }
 
@@ -1197,7 +1203,7 @@ export class KumoThermostatAccessory {
     }
 
     this.platform.log.debug(`HomeKit get target temp for ${this.accessory.displayName}: ${temp}°C`);
-    return this.correctTemp(temp);
+    return this.correctSetpoint(temp);
   }
 
   async setTargetTemperature(value: CharacteristicValue) {
@@ -1328,7 +1334,7 @@ export class KumoThermostatAccessory {
     if (v === undefined || v === null || isNaN(v)) {
       return fallback;
     }
-    return this.correctTemp(v);
+    return this.correctSetpoint(v);
   }
 
   async setHeatingThresholdTemperature(value: CharacteristicValue) {
