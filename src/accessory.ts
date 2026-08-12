@@ -851,6 +851,20 @@ export class KumoThermostatAccessory {
       this.hasReceivedValidUpdate = true; // Mark that we've received at least one valid complete update
       this.platform.log.debug(`${this.accessory.displayName}: ${status.roomTemp}°C (target: ${this.getTargetTempFromStatus(status)}°C, mode: ${status.operationMode})`);
 
+      // [TEMP-DIAG] Log raw API values and conversion candidates for debugging
+      {
+        const rawRoom = status.roomTemp;
+        const rawTarget = this.getTargetTempFromStatus(status);
+        const rawSpHeat = status.spHeat;
+        const rawSpCool = status.spCool;
+        const toF = (c: number) => c * 9 / 5 + 32;
+        const fmt = (c: number) => {
+          const f = toF(c);
+          return `${c}°C = ${f.toFixed(4)}°F → floor=${Math.floor(f)} round=${Math.round(f)}`;
+        };
+        this.platform.log.info(`[TEMP-DIAG] ${this.accessory.displayName}: roomTemp: ${fmt(rawRoom)} | spHeat: ${fmt(rawSpHeat)} | spCool: ${fmt(rawSpCool)} | target(${status.operationMode}): ${rawTarget !== undefined ? fmt(rawTarget) : 'n/a'}`);
+      }
+
       // Update all characteristics
       this.service.updateCharacteristic(
         this.platform.Characteristic.CurrentHeatingCoolingState,

@@ -493,6 +493,18 @@ class KumoThermostatAccessory {
             this.currentStatus = status;
             this.hasReceivedValidUpdate = true;
             this.platform.log.debug(`${this.accessory.displayName}: ${status.roomTemp}°C (target: ${this.getTargetTempFromStatus(status)}°C, mode: ${status.operationMode})`);
+            {
+                const rawRoom = status.roomTemp;
+                const rawTarget = this.getTargetTempFromStatus(status);
+                const rawSpHeat = status.spHeat;
+                const rawSpCool = status.spCool;
+                const toF = (c) => c * 9 / 5 + 32;
+                const fmt = (c) => {
+                    const f = toF(c);
+                    return `${c}°C = ${f.toFixed(4)}°F → floor=${Math.floor(f)} round=${Math.round(f)}`;
+                };
+                this.platform.log.info(`[TEMP-DIAG] ${this.accessory.displayName}: roomTemp: ${fmt(rawRoom)} | spHeat: ${fmt(rawSpHeat)} | spCool: ${fmt(rawSpCool)} | target(${status.operationMode}): ${rawTarget !== undefined ? fmt(rawTarget) : 'n/a'}`);
+            }
             this.service.updateCharacteristic(this.platform.Characteristic.CurrentHeatingCoolingState, this.mapToCurrentHeatingCoolingState(status));
             this.service.updateCharacteristic(this.platform.Characteristic.TargetHeatingCoolingState, this.mapToTargetHeatingCoolingState(status));
             if (status.roomTemp !== undefined && status.roomTemp !== null && !isNaN(status.roomTemp)) {
