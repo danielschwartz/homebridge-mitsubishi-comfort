@@ -2,9 +2,13 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.KumoThermostatAccessory = void 0;
 const settings_1 = require("./settings");
-function snapToFahrenheit(celsius, ceil = false) {
+function snapToFahrenheit(celsius) {
     const f = celsius * 9 / 5 + 32;
-    const rounded = ceil ? Math.ceil(f) : Math.round(f);
+    const floored = Math.floor(f);
+    const decimal = f - floored;
+    const rounded = Math.abs(decimal - 0.5) < 1e-9
+        ? (floored % 2 === 0 ? floored : floored + 1)
+        : Math.round(f);
     return Math.round(((rounded - 32) * 5 / 9) * 10000) / 10000;
 }
 function powerModeLabel(s) {
@@ -100,11 +104,8 @@ class KumoThermostatAccessory {
             });
         }
     }
-    correctRoomTemp(celsius) {
+    correctTemp(celsius) {
         return this.useFahrenheitCorrection ? snapToFahrenheit(celsius) : celsius;
-    }
-    correctSetpoint(celsius) {
-        return this.useFahrenheitCorrection ? snapToFahrenheit(celsius, true) : celsius;
     }
     applyDeviceProfile(profile) {
         this.deviceProfile = profile;
@@ -513,17 +514,17 @@ class KumoThermostatAccessory {
             this.service.updateCharacteristic(this.platform.Characteristic.CurrentHeatingCoolingState, this.mapToCurrentHeatingCoolingState(status));
             this.service.updateCharacteristic(this.platform.Characteristic.TargetHeatingCoolingState, this.mapToTargetHeatingCoolingState(status));
             if (status.roomTemp !== undefined && status.roomTemp !== null && !isNaN(status.roomTemp)) {
-                this.service.updateCharacteristic(this.platform.Characteristic.CurrentTemperature, this.correctRoomTemp(status.roomTemp));
+                this.service.updateCharacteristic(this.platform.Characteristic.CurrentTemperature, this.correctTemp(status.roomTemp));
             }
             const targetTemp = this.getTargetTempFromStatus(status);
             if (targetTemp !== undefined && targetTemp !== null && !isNaN(targetTemp)) {
-                this.service.updateCharacteristic(this.platform.Characteristic.TargetTemperature, this.correctSetpoint(targetTemp));
+                this.service.updateCharacteristic(this.platform.Characteristic.TargetTemperature, this.correctTemp(targetTemp));
             }
             if (status.spHeat !== undefined && status.spHeat !== null && !isNaN(status.spHeat)) {
-                this.service.updateCharacteristic(this.platform.Characteristic.HeatingThresholdTemperature, this.correctSetpoint(status.spHeat));
+                this.service.updateCharacteristic(this.platform.Characteristic.HeatingThresholdTemperature, this.correctTemp(status.spHeat));
             }
             if (status.spCool !== undefined && status.spCool !== null && !isNaN(status.spCool)) {
-                this.service.updateCharacteristic(this.platform.Characteristic.CoolingThresholdTemperature, this.correctSetpoint(status.spCool));
+                this.service.updateCharacteristic(this.platform.Characteristic.CoolingThresholdTemperature, this.correctTemp(status.spCool));
             }
             if (this.hasHumiditySensor && status.humidity !== null) {
                 this.service.updateCharacteristic(this.platform.Characteristic.CurrentRelativeHumidity, status.humidity);
@@ -720,7 +721,7 @@ class KumoThermostatAccessory {
             return 20;
         }
         this.platform.log.debug(`HomeKit get current temp for ${this.accessory.displayName}: ${temp}°C`);
-        return this.correctRoomTemp(temp);
+        return this.correctTemp(temp);
     }
     async getTargetTemperature() {
         if (!this.currentStatus) {
@@ -735,7 +736,7 @@ class KumoThermostatAccessory {
             return 20;
         }
         this.platform.log.debug(`HomeKit get target temp for ${this.accessory.displayName}: ${temp}°C`);
-        return this.correctSetpoint(temp);
+        return this.correctTemp(temp);
     }
     async setTargetTemperature(value) {
         const temp = value;
@@ -818,7 +819,7 @@ class KumoThermostatAccessory {
         if (v === undefined || v === null || isNaN(v)) {
             return fallback;
         }
-        return this.correctSetpoint(v);
+        return this.correctTemp(v);
     }
     async setHeatingThresholdTemperature(value) {
         await this.setThresholdTemperature('spHeat', value);

@@ -37,7 +37,6 @@ export declare class KumoThermostatAccessory {
     private loggingService;
     constructor(platform: KumoV3Platform, accessory: PlatformAccessory, kumoAPI: KumoAPI, pollIntervalSeconds?: number);
     private correctTemp;
-    private correctSetpoint;
     private applyDeviceProfile;
     private publishStructureChange;
     private setupFanOnlySwitch;
