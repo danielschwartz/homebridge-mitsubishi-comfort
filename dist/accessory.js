@@ -4,7 +4,12 @@ exports.KumoThermostatAccessory = void 0;
 const settings_1 = require("./settings");
 function snapToFahrenheit(celsius) {
     const f = celsius * 9 / 5 + 32;
-    return Math.round(((Math.round(f) - 32) * 5 / 9) * 10000) / 10000;
+    const floored = Math.floor(f);
+    const decimal = f - floored;
+    const rounded = Math.abs(decimal - 0.5) < 1e-9
+        ? (floored % 2 === 0 ? floored : floored + 1)
+        : Math.round(f);
+    return Math.round(((rounded - 32) * 5 / 9) * 10000) / 10000;
 }
 function powerModeLabel(s) {
     if (!s) {

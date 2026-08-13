@@ -189,60 +189,66 @@ test('correction is default (no config = treated as F)', () => {
     `should default to F correction (21°C → 70°F), got ${currentTemp}`);
 });
 
-test('Math.round correction across a range of values', () => {
+test('banker\'s rounding matches Kumo app across all 0.5°C values', () => {
   const { handler, accessory } = buildHandler('F');
 
+  // Every 0.5°C step in the operating range, with the expected °F from banker's
+  // rounding (round half to even). The two .5°F boundary cases are 17.5°C (63.5°F
+  // → 64, since 64 is even) and 22.5°C (72.5°F → 72, since 72 is even).
   const cases = [
-    { inputC: 14.5, expectedF: 58 },  // 58.1°F → round = 58
-    { inputC: 15.5, expectedF: 60 },  // 59.9°F → round = 60
-    { inputC: 16.5, expectedF: 62 },  // 61.7°F → round = 62
-    { inputC: 17.5, expectedF: 64 },  // 63.5°F → round = 64
-    { inputC: 18.0, expectedF: 64 },  // 64.4°F → round = 64
-    { inputC: 18.5, expectedF: 65 },  // 65.3°F → round = 65
-    { inputC: 20.0, expectedF: 68 },  // 68.0°F → round = 68 (exact)
-    { inputC: 20.5, expectedF: 69 },  // 68.9°F → round = 69
-    { inputC: 21.0, expectedF: 70 },  // 69.8°F → round = 70
-    { inputC: 22.0, expectedF: 72 },  // 71.6°F → round = 72
-    { inputC: 22.5, expectedF: 73 },  // 72.5°F → round = 73
-    { inputC: 23.0, expectedF: 73 },  // 73.4°F → round = 73
-    { inputC: 23.5, expectedF: 74 },  // 74.3°F → round = 74
-    { inputC: 25.0, expectedF: 77 },  // 77.0°F → round = 77 (exact)
+    { inputC: 14.0, expectedF: 57 },  // 57.2°F
+    { inputC: 14.5, expectedF: 58 },  // 58.1°F
+    { inputC: 15.0, expectedF: 59 },  // 59.0°F (exact)
+    { inputC: 15.5, expectedF: 60 },  // 59.9°F
+    { inputC: 16.0, expectedF: 61 },  // 60.8°F
+    { inputC: 16.5, expectedF: 62 },  // 61.7°F
+    { inputC: 17.0, expectedF: 63 },  // 62.6°F
+    { inputC: 17.5, expectedF: 64 },  // 63.5°F → bankers = 64 (even)
+    { inputC: 18.0, expectedF: 64 },  // 64.4°F
+    { inputC: 18.5, expectedF: 65 },  // 65.3°F
+    { inputC: 19.0, expectedF: 66 },  // 66.2°F
+    { inputC: 19.5, expectedF: 67 },  // 67.1°F
+    { inputC: 20.0, expectedF: 68 },  // 68.0°F (exact)
+    { inputC: 20.5, expectedF: 69 },  // 68.9°F
+    { inputC: 21.0, expectedF: 70 },  // 69.8°F
+    { inputC: 21.5, expectedF: 71 },  // 70.7°F
+    { inputC: 22.0, expectedF: 72 },  // 71.6°F
+    { inputC: 22.5, expectedF: 72 },  // 72.5°F → bankers = 72 (even)
+    { inputC: 23.0, expectedF: 73 },  // 73.4°F
+    { inputC: 23.5, expectedF: 74 },  // 74.3°F
+    { inputC: 24.0, expectedF: 75 },  // 75.2°F
+    { inputC: 24.5, expectedF: 76 },  // 76.1°F
+    { inputC: 25.0, expectedF: 77 },  // 77.0°F (exact)
   ];
 
   for (const { inputC, expectedF } of cases) {
     feedZoneUpdate(handler, inputC, inputC, inputC, 'cool');
 
     const currentTemp = getCharValue(accessory, 'Thermostat', Characteristic.CurrentTemperature);
-    const currentF = Math.round(currentTemp * 9 / 5 + 32);
-    assert.strictEqual(currentF, expectedF,
-      `room temp ${inputC}°C should round to ${expectedF}°F, got ${currentF}°F`);
-
     const targetTemp = getCharValue(accessory, 'Thermostat', Characteristic.TargetTemperature);
+    const currentF = Math.round(currentTemp * 9 / 5 + 32);
     const targetF = Math.round(targetTemp * 9 / 5 + 32);
+    assert.strictEqual(currentF, expectedF,
+      `room temp ${inputC}°C should be ${expectedF}°F, got ${currentF}°F`);
     assert.strictEqual(targetF, expectedF,
-      `setpoint ${inputC}°C should round to ${expectedF}°F, got ${targetF}°F`);
+      `setpoint ${inputC}°C should be ${expectedF}°F, got ${targetF}°F`);
   }
 });
 
-test('threshold temperatures use the same rounding correction', () => {
+test('threshold temperatures use the same banker\'s rounding', () => {
   const { handler, accessory } = buildHandler('F');
-  // In auto mode, both spHeat and spCool are published as threshold temps
   feedZoneUpdate(handler, 21.0, 20.0, 23.0, 'autoHeat');
 
   const heatThreshold = getCharValue(accessory, 'Thermostat', Characteristic.HeatingThresholdTemperature);
   const coolThreshold = getCharValue(accessory, 'Thermostat', Characteristic.CoolingThresholdTemperature);
 
-  // 20.0°C → 68°F (exact, round and floor agree)
-  const expectedHeatF = 68;
   const actualHeatF = Math.round(heatThreshold * 9 / 5 + 32);
-  assert.strictEqual(actualHeatF, expectedHeatF,
-    `heat threshold 20.0°C should round to ${expectedHeatF}°F, got ${actualHeatF}°F`);
+  assert.strictEqual(actualHeatF, 68,
+    `heat threshold 20.0°C should be 68°F, got ${actualHeatF}°F`);
 
-  // 23.0°C → 73.4°F → round = 73°F
-  const expectedCoolF = 73;
   const actualCoolF = Math.round(coolThreshold * 9 / 5 + 32);
-  assert.strictEqual(actualCoolF, expectedCoolF,
-    `cool threshold 23.0°C should round to ${expectedCoolF}°F, got ${actualCoolF}°F`);
+  assert.strictEqual(actualCoolF, 73,
+    `cool threshold 23.0°C should be 73°F, got ${actualCoolF}°F`);
 });
 
 test('internal currentStatus is NOT modified by the correction', () => {

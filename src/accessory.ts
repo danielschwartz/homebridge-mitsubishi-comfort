@@ -18,10 +18,16 @@ export type CommandOrigin =
 /**
  * Snap a Celsius value to the nearest Fahrenheit whole-degree equivalent.
  *
- * The Kumo API returns temperatures in °C. The Kumo Comfort app converts
- * to °F with standard rounding (Math.round) for display. We pre-snap to
- * the same grid so HomeKit's own °C→°F conversion lands on the same
- * integer the Kumo app shows.
+ * The Kumo API returns temperatures in °C. The Kumo Comfort app (Swift)
+ * converts to °F using banker's rounding (round half to even), which is
+ * Swift's default `.toNearestOrEven` rounding rule. We pre-snap to the
+ * same grid so HomeKit's own °C→°F conversion lands on the same integer
+ * the Kumo app shows.
+ *
+ * In the 16–25°C operating range only two values land on a .5°F boundary:
+ *   17.5°C = 63.5°F → banker's = 64 (even), Math.round = 64 (agree)
+ *   22.5°C = 72.5°F → banker's = 72 (even), Math.round = 73 (disagree)
+ * Verified live: 22.5°C displays as 72°F in both Kumo and HomeKit.
  *
  * The IEEE 754 precision guard (* 10000 / 10000) prevents floating-point
  * artifacts from nudging the back-converted value across a rounding
@@ -29,7 +35,12 @@ export type CommandOrigin =
  */
 function snapToFahrenheit(celsius: number): number {
   const f = celsius * 9 / 5 + 32;
-  return Math.round(((Math.round(f) - 32) * 5 / 9) * 10000) / 10000;
+  const floored = Math.floor(f);
+  const decimal = f - floored;
+  const rounded = Math.abs(decimal - 0.5) < 1e-9
+    ? (floored % 2 === 0 ? floored : floored + 1)
+    : Math.round(f);
+  return Math.round(((rounded - 32) * 5 / 9) * 10000) / 10000;
 }
 
 /**
