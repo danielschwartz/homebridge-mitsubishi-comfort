@@ -2,6 +2,7 @@ import { Service, PlatformAccessory, CharacteristicValue } from 'homebridge';
 import { KumoV3Platform } from './platform';
 import { KumoAPI } from './kumo-api';
 import { POLL_INTERVAL, DeviceStatus, DeviceProfile, Zone, Commands, MirrorState } from './settings';
+import { toHomeKitCelsius, toKumoCelsius, kumoFahrenheit } from './kumo-temp-table';
 
 /**
  * Where a command we sent came from. Logged with every send so "who changed this
@@ -31,6 +32,7 @@ export class KumoThermostatAccessory {
   private pollTimer: NodeJS.Timeout | null = null;
 
   private deviceSerial: string;
+  private readonly useFahrenheitCorrection: boolean;
   private siteId: string;
   private currentStatus: DeviceStatus | null = null;
   private pollIntervalMs: number;
@@ -96,6 +98,7 @@ export class KumoThermostatAccessory {
     private readonly kumoAPI: KumoAPI,
     pollIntervalSeconds?: number,
   ) {
+    this.useFahrenheitCorrection = (platform.config as unknown as { temperatureUnit?: string })?.temperatureUnit !== 'C';
     this.deviceSerial = this.accessory.context.device.deviceSerial;
     this.siteId = this.accessory.context.device.siteId;
     this.pollIntervalMs = (pollIntervalSeconds || POLL_INTERVAL / 1000) * 1000;
@@ -214,19 +217,25 @@ export class KumoThermostatAccessory {
       profile.maximumSetPoints.auto,
     );
 
+    // correctTemp maps into the HomeKit domain, which can sit a tenth outside the
+    // device's own Celsius limits (31°C publishes as 31.1). Declare the union so
+    // HAP never has to clamp a value the read path legitimately produces.
+    const publishedMin = Math.min(minTemp, this.correctTemp(minTemp));
+    const publishedMax = Math.max(maxTemp, this.correctTemp(maxTemp));
+
     this.service.getCharacteristic(this.platform.Characteristic.TargetTemperature)
       .setProps({
-        minValue: minTemp,
-        maxValue: maxTemp,
+        minValue: publishedMin,
+        maxValue: publishedMax,
         minStep: 0.1, // 0.1°C for faithful °F round-tripping — see constructor note
       });
 
     // Constrain the AUTO band handles to the same supported range so neither the
     // heating nor cooling threshold can be dragged outside the unit's limits.
     this.service.getCharacteristic(this.platform.Characteristic.HeatingThresholdTemperature)
-      .setProps({ minValue: minTemp, maxValue: maxTemp, minStep: 0.1 });
+      .setProps({ minValue: publishedMin, maxValue: publishedMax, minStep: 0.1 });
     this.service.getCharacteristic(this.platform.Characteristic.CoolingThresholdTemperature)
-      .setProps({ minValue: minTemp, maxValue: maxTemp, minStep: 0.1 });
+      .setProps({ minValue: publishedMin, maxValue: publishedMax, minStep: 0.1 });
 
     const minTempF = (minTemp * 9 / 5) + 32;
     const maxTempF = (maxTemp * 9 / 5) + 32;
@@ -839,7 +848,7 @@ export class KumoThermostatAccessory {
       if (status.roomTemp !== undefined && status.roomTemp !== null && !isNaN(status.roomTemp)) {
         this.service.updateCharacteristic(
           this.platform.Characteristic.CurrentTemperature,
-          status.roomTemp,
+          this.correctTemp(status.roomTemp),
         );
       }
 
@@ -851,7 +860,7 @@ export class KumoThermostatAccessory {
 
         this.service.updateCharacteristic(
           this.platform.Characteristic.TargetTemperature,
-          targetTemp,
+          this.correctTemp(targetTemp),
         );
       }
 
@@ -863,13 +872,13 @@ export class KumoThermostatAccessory {
       if (status.spHeat !== undefined && status.spHeat !== null && !isNaN(status.spHeat)) {
         this.service.updateCharacteristic(
           this.platform.Characteristic.HeatingThresholdTemperature,
-          status.spHeat,
+          this.correctTemp(status.spHeat),
         );
       }
       if (status.spCool !== undefined && status.spCool !== null && !isNaN(status.spCool)) {
         this.service.updateCharacteristic(
           this.platform.Characteristic.CoolingThresholdTemperature,
-          status.spCool,
+          this.correctTemp(status.spCool),
         );
       }
 
@@ -1164,7 +1173,7 @@ export class KumoThermostatAccessory {
     }
 
     this.platform.log.debug(`HomeKit get current temp for ${this.accessory.displayName}: ${temp}°C`);
-    return temp;
+    return this.correctTemp(temp);
   }
 
   async getTargetTemperature(): Promise<CharacteristicValue> {
@@ -1184,15 +1193,17 @@ export class KumoThermostatAccessory {
     }
 
     this.platform.log.debug(`HomeKit get target temp for ${this.accessory.displayName}: ${temp}°C`);
-    return temp;
+    return this.correctTemp(temp);
   }
 
   async setTargetTemperature(value: CharacteristicValue) {
     const temp = value as number;
+    const kumoTemp = this.toKumoTemp(temp);
 
-    // Convert to Fahrenheit for logging
-    const tempF = (temp * 9/5) + 32;
-    this.platform.log.info(`[TEMP CHANGE] ${this.accessory.displayName}: HomeKit sent ${temp.toFixed(3)}°C (${tempF.toFixed(1)}°F)`);
+    this.platform.log.info(
+      `[TEMP CHANGE] ${this.accessory.displayName}: HomeKit sent ${temp.toFixed(3)}°C `
+      + `(${kumoFahrenheit(kumoTemp)}°F) -> Kumo ${kumoTemp}°C`,
+    );
 
     if (!this.currentStatus) {
       this.platform.log.error('Cannot set temperature - no current status');
@@ -1211,7 +1222,7 @@ export class KumoThermostatAccessory {
       this.platform.log.debug(
         `[TEMP CHANGE] ${this.accessory.displayName}: unit is off / turning off — caching ${temp}°C without sending (avoids a doomed 400 and a setpoint that would revive the unit)`,
       );
-      this.currentStatus.spHeat = temp;
+      this.currentStatus.spHeat = kumoTemp;
       this.service.updateCharacteristic(
         this.platform.Characteristic.TargetTemperature,
         temp,
@@ -1223,22 +1234,22 @@ export class KumoThermostatAccessory {
     const commands: { spHeat?: number; spCool?: number } = {};
 
     if (this.currentStatus.operationMode === 'heat') {
-      commands.spHeat = temp;
+      commands.spHeat = kumoTemp;
     } else if (this.currentStatus.operationMode === 'cool') {
-      commands.spCool = temp;
+      commands.spCool = kumoTemp;
     } else if (this.isAutoMode(this.currentStatus.operationMode)) {
       // For auto mode, set both setpoints
-      commands.spHeat = temp;
-      commands.spCool = temp;
+      commands.spHeat = kumoTemp;
+      commands.spCool = kumoTemp;
     } else if (this.currentStatus.operationMode === 'dry' && this.dryUsesSetpoint()) {
       // Dry holds its setpoint in spCool, not spHeat (Kumo v3; there is no spDry
       // field). Verified live: the spCool write is adopted and the unit stays in
       // dry — sending spCool alone is sufficient, no operationMode needed.
-      commands.spCool = temp;
+      commands.spCool = kumoTemp;
     } else {
       // Fan-only ('vent'), dry-without-setpoint, or any other non-off mode:
       // no meaningful target. Default to the heat setpoint (unchanged behavior).
-      commands.spHeat = temp;
+      commands.spHeat = kumoTemp;
     }
 
     // Hold briefly so an "AC off" dispatched alongside this setpoint wins
@@ -1307,6 +1318,22 @@ export class KumoThermostatAccessory {
     return this.getThresholdTemperature('spCool', 24);
   }
 
+  /**
+   * Celsius to publish to HomeKit for a value Kumo holds, so the Home app shows
+   * the same degree the Kumo app shows.
+   */
+  private correctTemp(celsius: number): number {
+    return this.useFahrenheitCorrection ? toHomeKitCelsius(celsius) : celsius;
+  }
+
+  /**
+   * Map a Celsius value HomeKit supplied onto the Celsius Kumo stores for that
+   * same displayed degree, so the Kumo app and the Home app agree.
+   */
+  private toKumoTemp(celsius: number): number {
+    return this.useFahrenheitCorrection ? toKumoCelsius(celsius) : celsius;
+  }
+
   private getThresholdTemperature(field: 'spHeat' | 'spCool', fallback: number): number {
     if (!this.currentStatus) {
       return fallback;
@@ -1315,7 +1342,7 @@ export class KumoThermostatAccessory {
     if (v === undefined || v === null || isNaN(v)) {
       return fallback;
     }
-    return v;
+    return this.correctTemp(v);
   }
 
   async setHeatingThresholdTemperature(value: CharacteristicValue) {
@@ -1341,9 +1368,10 @@ export class KumoThermostatAccessory {
     const label = field === 'spHeat' ? 'AUTO HEAT SP' : 'AUTO COOL SP';
     const fallback = field === 'spHeat' ? 20 : 24;
 
-    const tempF = (temp * 9 / 5) + 32;
+    const kumoTemp = this.toKumoTemp(temp);
     this.platform.log.info(
-      `[${label}] ${this.accessory.displayName}: HomeKit sent ${temp.toFixed(1)}°C (${tempF.toFixed(1)}°F)`,
+      `[${label}] ${this.accessory.displayName}: HomeKit sent ${temp.toFixed(1)}°C `
+      + `(${kumoFahrenheit(kumoTemp)}°F) -> Kumo ${kumoTemp}°C`,
     );
 
     if (!this.currentStatus) {
@@ -1359,13 +1387,13 @@ export class KumoThermostatAccessory {
       this.platform.log.debug(
         `[${label}] ${this.accessory.displayName}: unit is off / turning off — caching ${temp}°C without sending`,
       );
-      this.currentStatus[field] = temp;
+      this.currentStatus[field] = kumoTemp;
       this.service.updateCharacteristic(characteristic, temp);
       return;
     }
 
     const commands: { spHeat?: number; spCool?: number } = {};
-    commands[field] = temp;
+    commands[field] = kumoTemp;
 
     // Hold briefly so an "AC off" dispatched alongside this handle wins
     // regardless of order (see setpointWriteGen). Keyed per field so the two
@@ -1379,7 +1407,7 @@ export class KumoThermostatAccessory {
         `[${label}] ${this.accessory.displayName}: unit turned off while held — caching ${temp}°C without sending`,
       );
       if (this.currentStatus) {
-        this.currentStatus[field] = temp;
+        this.currentStatus[field] = kumoTemp;
       }
       this.service.updateCharacteristic(characteristic, temp);
       return;
@@ -1389,7 +1417,7 @@ export class KumoThermostatAccessory {
 
     if (success) {
       this.platform.log.info(`[${label}] ${this.accessory.displayName}: Command accepted by API`);
-      this.currentStatus[field] = temp;
+      this.currentStatus[field] = kumoTemp;
       this.service.updateCharacteristic(characteristic, temp);
       // Mirror a HomeKit-driven AUTO-handle change to any followers immediately.
       this.notifyStatusListeners();
@@ -1538,7 +1566,10 @@ export class KumoThermostatAccessory {
       );
       const targetTemp = this.getTargetTempFromStatus(this.currentStatus);
       if (!isNaN(targetTemp)) {
-        this.service.updateCharacteristic(this.platform.Characteristic.TargetTemperature, targetTemp);
+        this.service.updateCharacteristic(
+          this.platform.Characteristic.TargetTemperature,
+          this.correctTemp(targetTemp),
+        );
       }
       if (this.dryService) {
         this.dryService.updateCharacteristic(
