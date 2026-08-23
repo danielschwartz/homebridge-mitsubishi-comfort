@@ -45,6 +45,26 @@
         "default": false,
         "description": "Enable verbose debug logging (requires running Homebridge with -D flag)"
       },
+      "temperatureUnit": {
+        "title": "Temperature Display Unit",
+        "type": "string",
+        "default": "F",
+        "oneOf": [
+          {
+            "title": "Fahrenheit (match the Kumo app)",
+            "enum": [
+              "F"
+            ]
+          },
+          {
+            "title": "Celsius (no correction)",
+            "enum": [
+              "C"
+            ]
+          }
+        ],
+        "description": "When set to F (default), temperatures are translated in both directions using Mitsubishi's own Fahrenheit tables: readings from the API are published to HomeKit as the degree the Kumo app shows, and setpoints from HomeKit are sent on an exact Fahrenheit degree. This keeps the Home app and the Kumo app showing the same number. Set to C to pass every value through unchanged."
+      },
       "excludeDevices": {
         "title": "Hide Device IDs",
         "type": "array",
@@ -137,7 +157,10 @@
       "type": "fieldset",
       "title": "Kumo Cloud Credentials",
       "expandable": false,
-      "items": ["username", "password"]
+      "items": [
+        "username",
+        "password"
+      ]
     },
     {
       "type": "fieldset",
@@ -171,7 +194,10 @@
       "title": "Local Control (experimental)",
       "expandable": true,
       "expanded": false,
-      "items": ["localControl", "localPollInterval"]
+      "items": [
+        "localControl",
+        "localPollInterval"
+      ]
     },
     {
       "type": "fieldset",
@@ -184,7 +210,10 @@
           "type": "array",
           "title": "Mirror Pairs",
           "buttonText": "Add Mirror Pair",
-          "items": ["mirror[].source", "mirror[].target"]
+          "items": [
+            "mirror[].source",
+            "mirror[].target"
+          ]
         }
       ]
     }
