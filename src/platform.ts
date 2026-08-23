@@ -303,6 +303,23 @@ export class KumoV3Platform implements DynamicPlatformPlugin {
           if (existingAccessory) {
             // Update existing accessory
             this.log.info('Restoring existing accessory from cache:', existingAccessory.displayName);
+
+            // Accessories are matched by serial, so a zone renamed in Kumo restores
+            // the right accessory carrying its old name. The Thermostat service's
+            // Name is rebuilt from the live zone below, but displayName is only set
+            // when the accessory is created — and displayName is what every log line
+            // prints, so a renamed zone would otherwise be mislabelled in the log for
+            // the life of the cache entry. Refresh it, and the AccessoryInformation
+            // Name characteristic with it, so the log and HomeKit agree on the zone.
+            if (existingAccessory.displayName !== displayName) {
+              this.log.info(
+                `Zone renamed in Kumo: '${existingAccessory.displayName}' -> '${displayName}' (${deviceSerial})`,
+              );
+              existingAccessory.displayName = displayName;
+              existingAccessory.getService(this.Service.AccessoryInformation)
+                ?.updateCharacteristic(this.Characteristic.Name, displayName);
+            }
+
             existingAccessory.context.device = {
               deviceSerial,
               zoneName: zone.name,
