@@ -1,0 +1,12 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.APP_VERSION = exports.POLL_INTERVAL = exports.TOKEN_REFRESH_INTERVAL = exports.LEGACY_APP_VERSION = exports.LEGACY_API_BASE_URL = exports.SOCKET_BASE_URL = exports.API_BASE_URL = exports.PLUGIN_NAME = exports.PLATFORM_NAME = void 0;
+exports.PLATFORM_NAME = 'KumoV3';
+exports.PLUGIN_NAME = 'homebridge-mitsubishi-comfort';
+exports.API_BASE_URL = 'https://app-prod.kumocloud.com/v3';
+exports.SOCKET_BASE_URL = 'https://socket-prod.kumocloud.com';
+exports.LEGACY_API_BASE_URL = 'https://geo-c.kumocloud.com';
+exports.LEGACY_APP_VERSION = '2.2.0';
+exports.TOKEN_REFRESH_INTERVAL = 20 * 60 * 1000;
+exports.POLL_INTERVAL = 30 * 1000;
+exports.APP_VERSION = '3.2.4';

@@ -919,7 +919,9 @@ export class KumoThermostatAccessory {
       if (this.loggingService) {
         const entry: Record<string, number> = {
           time: Math.round(Date.now() / 1000),
-          temp: status.roomTemp,
+          // Same corrected value as CurrentTemperature, so the Eve graph and the
+          // thermostat tile read the same degree.
+          temp: this.correctTemp(status.roomTemp),
         };
         if (status.humidity !== null && status.humidity !== undefined) {
           entry.humidity = status.humidity;

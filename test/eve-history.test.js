@@ -150,7 +150,7 @@ test('zone update logs temperature to history', () => {
 
   const svc = fakeGatoFactory.instances[0];
   assert.strictEqual(svc.entries.length, 1);
-  assert.strictEqual(svc.entries[0].temp, 22.5);
+  assert.strictEqual(svc.entries[0].temp, 22.2);
   assert.ok(svc.entries[0].time > 0, 'timestamp is set');
   assert.strictEqual(svc.entries[0].humidity, undefined, 'no humidity when null');
 });
@@ -161,7 +161,7 @@ test('zone update logs humidity when available', () => {
 
   const svc = fakeGatoFactory.instances[0];
   assert.strictEqual(svc.entries.length, 1);
-  assert.strictEqual(svc.entries[0].temp, 21);
+  assert.strictEqual(svc.entries[0].temp, 20.6);
   assert.strictEqual(svc.entries[0].humidity, 55);
 });
 
@@ -174,8 +174,8 @@ test('multiple updates accumulate history entries', () => {
   const svc = fakeGatoFactory.instances[0];
   assert.strictEqual(svc.entries.length, 3);
   assert.strictEqual(svc.entries[0].temp, 20);
-  assert.strictEqual(svc.entries[1].temp, 21);
-  assert.strictEqual(svc.entries[2].temp, 22);
+  assert.strictEqual(svc.entries[1].temp, 20.6);
+  assert.strictEqual(svc.entries[2].temp, 21.7);
 });
 
 test('no history entries when history is disabled', () => {
